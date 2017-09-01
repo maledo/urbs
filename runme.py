@@ -11,52 +11,85 @@ from pyomo.opt.base import SolverFactory
 def scenario_base(data):
     # do nothing
     return data
-
-
-def scenario_stock_prices(data):
-    # change stock commodity prices
-    co = data['commodity']
-    stock_commodities_only = (co.index.get_level_values('Type') == 'Stock')
-    co.loc[stock_commodities_only, 'price'] *= 1.5
-    return data
-
-
-def scenario_co2_limit(data):
-    # change global CO2 limit
-    hacks = data['hacks']
-    hacks.loc['Global CO2 limit', 'Value'] *= 0.05
-    return data
-
-
-def scenario_co2_tax_mid(data):
-    # change CO2 price in Mid
-    co = data['commodity']
-    co.loc[('Mid', 'CO2', 'Env'), 'price'] = 50
-    return data
-
-
-def scenario_north_process_caps(data):
-    # change maximum installable capacity
+   
+def scenario_pv(data):
+    # allow renewable expansion
     pro = data['process']
-    pro.loc[('North', 'Hydro plant'), 'cap-up'] *= 0.5
-    pro.loc[('North', 'Biomass plant'), 'cap-up'] *= 0.25
+    nuclear_plants = (pro.index.get_level_values('Process') == 'Nuclear plant')
+    pro.loc[nuclear_plants, 'inst-cap'] = 0
+    pro.loc[nuclear_plants, 'cap-lo'] = 0
+    pro.loc[nuclear_plants, 'cap-up'] = 0
+    
+    pv = (pro.index.get_level_values('Process') == 'Photovoltaics')
+                
+    pro.loc[pv, 'cap-up'] = float('inf')
+    
+    # allow transmission expansion
+    tra = data['transmission']
+    lines = (tra.index.get_level_values('Transmission') == 'hvac')
+    tra.loc[lines, 'cap-up'] = float('inf')
+    
+    # allow storage expansion
+    sto = data['storage']
+    battery = (sto.index.get_level_values('Storage') == ('Battery'))
+    sto.loc[battery, 'cap-up-c'] = float('inf')
+    sto.loc[battery, 'cap-up-p'] = float('inf')
+    return data
+    
+def scenario_wind(data):
+    # allow renewable expansion
+    pro = data['process']
+    nuclear_plants = (pro.index.get_level_values('Process') == 'Nuclear plant')
+    pro.loc[nuclear_plants, 'inst-cap'] = 0
+    pro.loc[nuclear_plants, 'cap-lo'] = 0
+    pro.loc[nuclear_plants, 'cap-up'] = 0
+    
+    renewables = ((pro.index.get_level_values('Process') == 'Wind park')
+                | (pro.index.get_level_values('Process') == 'Photovoltaics'))
+                
+    pro.loc[renewables, 'cap-up'] = float('inf')
+    
+    # allow transmission expansion
+    tra = data['transmission']
+    lines = (tra.index.get_level_values('Transmission') == 'hvac')
+    tra.loc[lines, 'cap-up'] = float('inf')
+    
+    # allow storage expansion
+    sto = data['storage']
+    battery = (sto.index.get_level_values('Storage') == ('Battery'))
+    sto.loc[battery, 'cap-up-c'] = float('inf')
+    sto.loc[battery, 'cap-up-p'] = float('inf')
     return data
 
-
-def scenario_no_dsm(data):
-    # empty the DSM dataframe completely
-    data['dsm'] = pd.DataFrame()
+def scenario_biomass(data):
+    # allow renewable expansion
+    pro = data['process']
+    nuclear_plants = (pro.index.get_level_values('Process') == 'Nuclear plant')
+    pro.loc[nuclear_plants, 'inst-cap'] = 0
+    pro.loc[nuclear_plants, 'cap-lo'] = 0
+    pro.loc[nuclear_plants, 'cap-up'] = 0
+    
+    renewables = ((pro.index.get_level_values('Process') == 'Wind park')
+                | (pro.index.get_level_values('Process') == 'Photovoltaics'))
+    biomass = (pro.index.get_level_values('Process') == 'Biomass plant')
+                
+    pro.loc[renewables, 'cap-up'] = float('inf')
+    pro.loc[biomass, 'cap-up'] = pro.loc[biomass, 'inst-cap']*1.5
+    
+    # allow transmission expansion
+    tra = data['transmission']
+    lines = (tra.index.get_level_values('Transmission') == 'hvac')
+    tra.loc[lines, 'cap-up'] = float('inf')
+    
+    # allow storage expansion
+    sto = data['storage']
+    battery = (sto.index.get_level_values('Storage') == ('Battery'))
+    sto.loc[battery, 'cap-up-c'] = float('inf')
+    sto.loc[battery, 'cap-up-p'] = float('inf')
     return data
+    
 
-
-def scenario_all_together(data):
-    # combine all other scenarios
-    data = scenario_stock_prices(data)
-    data = scenario_co2_limit(data)
-    data = scenario_north_process_caps(data)
-    return data
-
-
+    
 def prepare_result_directory(result_name):
     """ create a time stamped directory within the result folder """
     # timestamp for result directory
@@ -110,17 +143,21 @@ def run_scenario(input_file, timesteps, scenario, result_dir,
     # scenario name, read and modify data for scenario
     sce = scenario.__name__
     data = urbs.read_excel(input_file)
+    # drop Source lines added in Excel
+    for key in data:
+        data[key].drop('Source', axis=0, inplace=True, errors='ignore')
     data = scenario(data)
 
     # create model
     prob = urbs.create_model(data, timesteps)
+    #prob.write('model.lp', io_options={'symbolic_solver_labels': True})
 
     # refresh time stamp string and create filename for logfile
     now = prob.created
     log_filename = os.path.join(result_dir, '{}.log').format(sce)
 
     # solve model and read results
-    optim = SolverFactory('glpk')  # cplex, glpk, gurobi, ...
+    optim = SolverFactory('gurobi')  # cplex, glpk, gurobi, ...
     optim = setup_solver(optim, logfile=log_filename)
     result = optim.solve(prob, tee=True)
 
@@ -143,37 +180,68 @@ def run_scenario(input_file, timesteps, scenario, result_dir,
         plot_title_prefix=sce.replace('_', ' '),
         plot_tuples=plot_tuples,
         periods=plot_periods,
-        figure_size=(24, 9))
+        figure_size=(24, 9),
+        extensions=['png'])
     return prob
 
 if __name__ == '__main__':
-    input_file = 'mimo-example.xlsx'
+    input_file = 'bavaria.xlsx'
     result_name = os.path.splitext(input_file)[0]  # cut away file extension
     result_dir = prepare_result_directory(result_name)  # name + time stamp
 
     # simulation timesteps
-    (offset, length) = (3500, 168) # time step selection
+    (offset, length) = (0, 24*365) # time step selection
     timesteps = range(offset, offset+length+1)
 
     # plotting commodities/sites
     plot_tuples = [
-        ('North', 'Elec'),
-        ('Mid', 'Elec'),
-        ('South', 'Elec'),
-        (['North', 'Mid', 'South'], 'Elec')]
+        ('Mittelfranken', 'Elec'),
+        ('Niederbayern', 'Elec'),
+        ('Oberbayern', 'Elec'),
+        ('Oberfranken', 'Elec'),
+        ('Oberpfalz', 'Elec'),
+        ('Schwaben', 'Elec'),
+        ('Unterfranken', 'Elec'),
+        (['Mittelfranken', 'Niederbayern',
+        'Oberbayern', 'Oberfranken',
+        'Oberpfalz', 'Schwaben',
+        'Unterfranken'], 'Elec')]
 
     # detailed reporting commodity/sites
     report_tuples = [
-        ('North', 'Elec'), ('Mid', 'Elec'), ('South', 'Elec'),
-        ('North', 'CO2'), ('Mid', 'CO2'), ('South', 'CO2')]
+        ('Mittelfranken', 'Elec'),
+        ('Niederbayern', 'Elec'),
+        ('Oberbayern', 'Elec'),
+        ('Oberfranken', 'Elec'),
+        ('Oberpfalz', 'Elec'),
+        ('Schwaben', 'Elec'),
+        ('Unterfranken', 'Elec'),
+        ('Mittelfranken', 'CO2'),
+        ('Niederbayern', 'CO2'),
+        ('Oberbayern', 'CO2'),
+        ('Oberfranken', 'CO2'),
+        ('Oberpfalz', 'CO2'),
+        ('Schwaben', 'CO2'),
+        ('Unterfranken', 'CO2')]
 
     # plotting timesteps
     plot_periods = {
-        'all': timesteps[1:]
+        'all': timesteps[1:],
+        'spring': timesteps[1417:1585],
+        'summer': timesteps[3625:3793],
+        'autumn': timesteps[5833:6001],
+        'winter': timesteps[8017:8185]
     }
 
     # add or change plot colors
     my_colors = {
+        'Unterfranken': (230, 200, 200),
+        'Mittelfranken': (200, 230, 200),
+        'Oberfranken': (200, 200, 230),
+        'Oberpfalz': (130, 200, 200),
+        'Niederbayern': (200, 130, 200),
+        'Oberbayern': (200, 200, 130),
+        'Schwaben': (230, 100, 100),
         'South': (230, 200, 200),
         'Mid': (200, 230, 200),
         'North': (200, 200, 230)}
@@ -183,12 +251,10 @@ if __name__ == '__main__':
     # select scenarios to be run
     scenarios = [
         scenario_base,
-        scenario_stock_prices,
-        scenario_co2_limit,
-        scenario_co2_tax_mid,
-        scenario_no_dsm,
-        scenario_north_process_caps,
-        scenario_all_together]
+        scenario_pv,
+        scenario_wind,
+        scenario_biomass
+        ]
 
     for scenario in scenarios:
         prob = run_scenario(input_file, timesteps, scenario, result_dir,
