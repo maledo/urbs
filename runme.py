@@ -13,47 +13,77 @@ def scenario_base(data):
     return data
 
 
-def scenario_stock_prices(data):
-    # change stock commodity prices
-    co = data['commodity']
-    stock_commodities_only = (co.index.get_level_values('Type') == 'Stock')
-    co.loc[stock_commodities_only, 'price'] *= 1.5
+def scenario_nuclear_free(data):
+    # shut down nuclear plants
+    pro = data['process']
+    nuclear_plants = (pro.index.get_level_values('Process') == 'Nuclear plant')
+    pro.loc[nuclear_plants, 'inst-cap'] = 0
+    pro.loc[nuclear_plants, 'cap-lo'] = 0
+    pro.loc[nuclear_plants, 'cap-up'] = 0
+
+    # allow renewable expansion    
+    renewables = ((pro.index.get_level_values('Process') == 'Wind plant')
+                  | (pro.index.get_level_values('Process') == 'Solar plant'))
+
+    pro.loc[renewables, 'cap-up'] = float('inf')
+
+    # allow cc expansion
+    cc_plants = (pro.index.get_level_values('Process') == 'CC plant')
+    pro.loc[cc_plants, 'cap-up'] *= 1.5
+
+    slack = (pro.index.get_level_values('Process') == 'Slack powerplant')
+    pro.loc[slack, 'inst-cap'] = 0
+    pro.loc[slack, 'cap-lo'] = 0
+    pro.loc[slack, 'cap-up'] = 0
+
+    # allow bio expansion
+    bio_plants = (pro.index.get_level_values('Process') == 'Biomass plant')
+    pro.loc[bio_plants, 'cap-up'] *= 1.2
+
+    # allow transmission expansion
+    tra = data['transmission']
+    lines = (tra.index.get_level_values('Transmission') == 'hvac')
+    tra.loc[lines, 'cap-up'] = float('inf')
+
     return data
 
-
-def scenario_co2_limit(data):
+def scenario_co2_2030(data):
     # change global CO2 limit
     global_prop = data['global_prop']
-    global_prop.loc['CO2 limit', 'value'] *= 0.05
-    return data
+    global_prop.loc['CO2 limit', 'value'] = 183000000
 
-
-def scenario_co2_tax_mid(data):
-    # change CO2 price in Mid
-    co = data['commodity']
-    co.loc[('Mid', 'CO2', 'Env'), 'price'] = 50
-    return data
-
-
-def scenario_north_process_caps(data):
-    # change maximum installable capacity
+    # shut down nuclear plants
     pro = data['process']
-    pro.loc[('North', 'Hydro plant'), 'cap-up'] *= 0.5
-    pro.loc[('North', 'Biomass plant'), 'cap-up'] *= 0.25
-    return data
+    nuclear_plants = (pro.index.get_level_values('Process') == 'Nuclear plant')
+    pro.loc[nuclear_plants, 'inst-cap'] = 0
+    pro.loc[nuclear_plants, 'cap-lo'] = 0
+    pro.loc[nuclear_plants, 'cap-up'] = 0
+
+    # allow cc expansion
+    cc_plants = (pro.index.get_level_values('Process') == 'CC plant')
+    pro.loc[cc_plants, 'cap-up'] *= 1.5
+
+    slack = (pro.index.get_level_values('Process') == 'Slack powerplant')
+    pro.loc[slack, 'inst-cap'] = 0
+    pro.loc[slack, 'cap-lo'] = 0
+    pro.loc[slack, 'cap-up'] = 0
+
+    # allow bio expansion
+    bio_plants = (pro.index.get_level_values('Process') == 'Biomass plant')
+    pro.loc[bio_plants, 'cap-up'] *= 1.2
+
+    # allow renewable expansion    
+    renewables = ((pro.index.get_level_values('Process') == 'Wind plant')
+                  | (pro.index.get_level_values('Process') == 'Solar plant'))
+
+    pro.loc[renewables, 'cap-up'] = float('inf')
+
+    # allow transmission expansion
+    tra = data['transmission']
+    lines = (tra.index.get_level_values('Transmission') == 'hvac')
+    tra.loc[lines, 'cap-up'] = float('inf')
 
 
-def scenario_no_dsm(data):
-    # empty the DSM dataframe completely
-    data['dsm'] = pd.DataFrame()
-    return data
-
-
-def scenario_all_together(data):
-    # combine all other scenarios
-    data = scenario_stock_prices(data)
-    data = scenario_co2_limit(data)
-    data = scenario_north_process_caps(data)
     return data
 
 
@@ -113,7 +143,13 @@ def run_scenario(input_file, timesteps, scenario, result_dir,
     # scenario name, read and modify data for scenario
     sce = scenario.__name__
     data = urbs.read_excel(input_file)
+
+    # drop source lines added in Excel
+    for key in data:
+        data[key].drop('Source', axis=0, inplace=True, errors='ignore')
+        data[key].drop('Source', axis=1, inplace=True, errors='ignore')
     data = scenario(data)
+
     urbs.validate_input(data)
 
     # create model
@@ -150,7 +186,7 @@ def run_scenario(input_file, timesteps, scenario, result_dir,
     return prob
 
 if __name__ == '__main__':
-    input_file = 'mimo-example.xlsx'
+    input_file = 'germany.xlsx'
     result_name = os.path.splitext(input_file)[0]  # cut away file extension
     result_dir = prepare_result_directory(result_name)  # name + time stamp
 
@@ -160,26 +196,90 @@ if __name__ == '__main__':
     shutil.copy(__file__, result_dir)
 
     # simulation timesteps
-    (offset, length) = (3500, 168)  # time step selection
+    (offset, length) = (0, 24)  # time step selection
     timesteps = range(offset, offset+length+1)
 
     # plotting commodities/sites
     plot_tuples = [
-        ('North', 'Elec'),
-        ('Mid', 'Elec'),
-        ('South', 'Elec'),
-        (['North', 'Mid', 'South'], 'Elec')]
+        # ('Baden-Württemberg', 'Elec'),
+        # ('Bavaria', 'Elec'),
+        # ('Berlin', 'Elec'),
+        # ('Brandenburg', 'Elec'),
+        # ('Bremen', 'Elec'),
+        # ('Hamburg', 'Elec'),
+        # ('Hesse', 'Elec'),
+        # ('Lower Saxony', 'Elec'),
+        # ('Mecklenburg-Vorpommern', 'Elec'),
+        # ('North Rhine-Westphalia', 'Elec'),
+        # ('Rhineland-Palatinate', 'Elec'),
+        # ('Saarland', 'Elec'),
+        # ('Saxony', 'Elec'),
+        # ('Saxony-Anhalt', 'Elec'),
+        # ('Schleswig-Holstein', 'Elec'),
+        # ('Thuringia', 'Elec'),
+        (['Baden-Württemberg', 'Bavaria', 'Berlin', 'Brandenburg',
+          'Bremen', 'Hamburg', 'Hesse', 'Lower Saxony', 'Mecklenburg-Vorpommern',
+          'North Rhine-Westphalia', 'Rhineland-Palatinate', 'Saarland', 'Saxony',
+          'Saxony-Anhalt', 'Schleswig-Holstein', 'Thuringia', 'Offshore'], 'Elec')]
 
-    # optional: define names for sites in plot_tuples
-    plot_sites_name = {('North', 'Mid', 'South'):'All'}
+    # optional: define names for plot_tuples
+    plot_sites_name = {
+        ('Baden-Württemberg', 'Bavaria', 'Berlin', 'Brandenburg', 'Bremen',
+         'Hamburg', 'Hesse', 'Lower Saxony', 'Mecklenburg-Vorpommern', 'North Rhine-Westphalia',
+         'Rhineland-Palatinate', 'Saarland', 'Saxony', 'Saxony-Anhalt', 'Schleswig-Holstein',
+         'Thuringia', 'Offshore'): 'Germany'}
 
     # detailed reporting commodity/sites
     report_tuples = [
-        ('North', 'Elec'), ('Mid', 'Elec'), ('South', 'Elec'),
-        ('North', 'CO2'), ('Mid', 'CO2'), ('South', 'CO2')]
+        ('Baden-Württemberg', 'Elec'),
+        ('Bavaria', 'Elec'),
+        ('Berlin', 'Elec'),
+        ('Brandenburg', 'Elec'),
+        ('Bremen', 'Elec'),
+        ('Hamburg', 'Elec'),
+        ('Hesse', 'Elec'),
+        ('Lower Saxony', 'Elec'),
+        ('Mecklenburg-Vorpommern', 'Elec'),
+        ('North Rhine-Westphalia', 'Elec'),
+        ('Rhineland-Palatinate', 'Elec'),
+        ('Saarland', 'Elec'),
+        ('Saxony', 'Elec'),
+        ('Saxony-Anhalt', 'Elec'),
+        ('Schleswig-Holstein', 'Elec'),
+        ('Thuringia', 'Elec'),
+        ('Offshore', 'Elec'),
+        (['Baden-Württemberg', 'Bavaria', 'Berlin', 'Brandenburg',
+          'Bremen', 'Hamburg', 'Hesse', 'Lower Saxony', 'Mecklenburg-Vorpommern',
+          'North Rhine-Westphalia', 'Rhineland-Palatinate', 'Saarland', 'Saxony',
+          'Saxony-Anhalt', 'Schleswig-Holstein', 'Thuringia', 'Offshore'], 'Elec'),
+        ('Baden-Württemberg', 'CO2'),
+        ('Bavaria', 'CO2'),
+        ('Berlin', 'CO2'),
+        ('Brandenburg', 'CO2'),
+        ('Bremen', 'CO2'),
+        ('Hamburg', 'CO2'),
+        ('Hesse', 'CO2'),
+        ('Lower Saxony', 'CO2'),
+        ('Mecklenburg-Vorpommern', 'CO2'),
+        ('North Rhine-Westphalia', 'CO2'),
+        ('Rhineland-Palatinate', 'CO2'),
+        ('Saarland', 'CO2'),
+        ('Saxony', 'CO2'),
+        ('Saxony-Anhalt', 'CO2'),
+        ('Schleswig-Holstein', 'CO2'),
+        ('Thuringia', 'CO2'),
+        ('Offshore', 'CO2'),
+        (['Baden-Württemberg', 'Bavaria', 'Berlin', 'Brandenburg',
+          'Bremen', 'Hamburg', 'Hesse', 'Lower Saxony', 'Mecklenburg-Vorpommern',
+          'North Rhine-Westphalia', 'Rhineland-Palatinate', 'Saarland', 'Saxony',
+          'Saxony-Anhalt', 'Schleswig-Holstein', 'Thuringia', 'Offshore'], 'CO2')]
 
-    # optional: define names for sites in report_tuples
-    report_sites_name = {'North': 'Greenland'}
+    # optional: define names for report_tuples
+    report_sites_name = {
+        ('Baden-Württemberg', 'Bavaria', 'Berlin', 'Brandenburg', 'Bremen',
+         'Hamburg', 'Hesse', 'Lower Saxony', 'Mecklenburg-Vorpommern', 'North Rhine-Westphalia',
+         'Rhineland-Palatinate', 'Saarland', 'Saxony', 'Saxony-Anhalt', 'Schleswig-Holstein',
+         'Thuringia', 'Offshore'): 'Germany'}
 
     # plotting timesteps
     plot_periods = {
@@ -187,22 +287,16 @@ if __name__ == '__main__':
     }
 
     # add or change plot colors
-    my_colors = {
-        'South': (230, 200, 200),
-        'Mid': (200, 230, 200),
-        'North': (200, 200, 230)}
+    my_colors = {}
     for country, color in my_colors.items():
         urbs.COLORS[country] = color
 
     # select scenarios to be run
     scenarios = [
         scenario_base,
-        scenario_stock_prices,
-        scenario_co2_limit,
-        scenario_co2_tax_mid,
-        scenario_no_dsm,
-        scenario_north_process_caps,
-        scenario_all_together]
+        scenario_nuclear_free,
+        scenario_co2_2030
+    ]
 
     for scenario in scenarios:
         prob = run_scenario(input_file, timesteps, scenario, result_dir,
